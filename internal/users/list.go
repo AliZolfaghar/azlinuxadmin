@@ -4,9 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 // Account is a local Linux user summary for the UI.
@@ -117,12 +118,9 @@ func readShadowStatus() map[string]shadowStatus {
 	return m
 }
 
-// RequireRoot returns an error unless running as root.
+// RequireRoot returns an error unless privileged ops can run (root or sudo session).
 func RequireRoot() error {
-	if os.Geteuid() != 0 {
-		return fmt.Errorf("root required to manage users (re-run with sudo)")
-	}
-	return nil
+	return priv.Ensure()
 }
 
 func validateUsername(name string) error {
@@ -143,16 +141,7 @@ func validateUsername(name string) error {
 }
 
 func runCmd(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("%s %s: %s", name, strings.Join(args, " "), msg)
-	}
-	return nil
+	return priv.Run(name, args...)
 }
 
 func findAccount(name string) (*Account, error) {

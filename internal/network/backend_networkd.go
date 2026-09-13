@@ -2,12 +2,11 @@ package network
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 const networkdDir = "/etc/systemd/network"
@@ -19,7 +18,7 @@ func enrichFromNetworkd(ifaces []Iface) {
 		idx[ifaces[i].Name] = &ifaces[i]
 	}
 	for _, path := range files {
-		data, err := os.ReadFile(path)
+		data, err := priv.ReadFile(path)
 		if err != nil {
 			continue
 		}
@@ -65,7 +64,7 @@ func applyIfaceNetworkd(j *change.Journal, upd IfaceUpdate) (*change.Entry, erro
 		return nil, err
 	}
 	content := buildNetworkdUnit(upd)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := priv.WriteFile(path, []byte(content), 0o644); err != nil {
 		restoreAll(backups)
 		return nil, err
 	}
@@ -86,12 +85,12 @@ func applyDNSNetworkd(j *change.Journal, upd IfaceUpdate) (*change.Entry, error)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := priv.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	updated := upsertNetworkdDNS(string(data), upd.Nameservers)
-	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+	if err := priv.WriteFile(path, []byte(updated), 0o644); err != nil {
 		restoreAll(backups)
 		return nil, err
 	}
@@ -111,7 +110,7 @@ func applyGatewayNetworkd(j *change.Journal, upd IfaceUpdate) (*change.Entry, er
 		return nil, err
 	}
 	content := buildNetworkdUnit(upd)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := priv.WriteFile(path, []byte(content), 0o644); err != nil {
 		restoreAll(backups)
 		return nil, err
 	}
@@ -126,12 +125,10 @@ func applyGatewayNetworkd(j *change.Journal, upd IfaceUpdate) (*change.Entry, er
 }
 
 func backupNetworkdFile(iface string) (string, []change.FileBackup, error) {
-	if err := os.MkdirAll(networkdDir, 0o755); err != nil {
-		return "", nil, err
-	}
+	_ = priv.Run("mkdir", "-p", networkdDir)
 	files, _ := filepath.Glob(filepath.Join(networkdDir, "*.network"))
 	for _, path := range files {
-		data, err := os.ReadFile(path)
+		data, err := priv.ReadFile(path)
 		if err != nil {
 			continue
 		}
@@ -222,8 +219,8 @@ func upsertNetworkdDNS(content string, dns []string) string {
 }
 
 func reloadNetworkd() error {
-	_ = exec.Command("networkctl", "reload").Run()
-	if err := exec.Command("systemctl", "restart", "systemd-networkd").Run(); err != nil {
+	_ = priv.Run("networkctl", "reload")
+	if err := priv.Run("systemctl", "restart", "systemd-networkd"); err != nil {
 		return fmt.Errorf("restart systemd-networkd: %w", err)
 	}
 	return nil

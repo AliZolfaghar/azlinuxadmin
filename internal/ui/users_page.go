@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 	"github.com/AliZolfaghar/azlinuxadmin/internal/users"
 )
 
@@ -157,6 +158,8 @@ func (p *usersPage) Update(msg tea.Msg) tea.Cmd {
 		}
 		p.rebuildFilter()
 		return nil
+	case privRetryMsg:
+		return p.runConfirmed()
 	}
 
 	switch p.mode {
@@ -375,16 +378,17 @@ func (p *usersPage) submitForm() tea.Cmd {
 
 func (p *usersPage) runConfirmed() tea.Cmd {
 	action := p.confirm
-	p.confirm = usersConfirmNone
-	p.mode = usersModeList
 	if p.journal == nil {
+		p.confirm = usersConfirmNone
+		p.mode = usersModeList
 		p.errMsg = "journal unavailable"
 		return nil
 	}
 
+	var err error
 	switch action {
 	case usersConfirmAdd:
-		_, err := users.AddUser(p.journal, users.AddRequest{
+		_, err = users.AddUser(p.journal, users.AddRequest{
 			Name:       strings.TrimSpace(p.inputs[0].Value()),
 			Password:   p.inputs[1].Value(),
 			Shell:      strings.TrimSpace(p.inputs[2].Value()),
@@ -392,78 +396,73 @@ func (p *usersPage) runConfirmed() tea.Cmd {
 			Home:       strings.TrimSpace(p.inputs[4].Value()),
 			CreateHome: true,
 		})
-		if err != nil {
-			p.errMsg = err.Error()
-			return nil
-		}
-		p.status = "user created (undo with u)"
-		return p.refreshCmd()
-
 	case usersConfirmEdit:
-		_, err := users.EditUser(p.journal, users.EditRequest{
+		_, err = users.EditUser(p.journal, users.EditRequest{
 			Name:     strings.TrimSpace(p.inputs[0].Value()),
 			Password: p.inputs[1].Value(),
 			Shell:    strings.TrimSpace(p.inputs[2].Value()),
 			GECOS:    strings.TrimSpace(p.inputs[3].Value()),
 			Home:     strings.TrimSpace(p.inputs[4].Value()),
 		})
-		if err != nil {
-			p.errMsg = err.Error()
-			return nil
-		}
-		p.status = "user updated (undo with u)"
-		return p.refreshCmd()
-
 	case usersConfirmDelete:
 		acct := p.selected()
 		if acct == nil {
+			p.confirm = usersConfirmNone
+			p.mode = usersModeList
 			return nil
 		}
-		_, err := users.DeleteUser(p.journal, acct.Name, true)
-		if err != nil {
-			p.errMsg = err.Error()
-			return nil
-		}
-		p.status = "user deleted (undo with u)"
-		return p.refreshCmd()
-
+		_, err = users.DeleteUser(p.journal, acct.Name, true)
 	case usersConfirmDisable:
 		acct := p.selected()
 		if acct == nil {
+			p.confirm = usersConfirmNone
+			p.mode = usersModeList
 			return nil
 		}
-		_, err := users.SetDisabled(p.journal, acct.Name, true)
-		if err != nil {
-			p.errMsg = err.Error()
-			return nil
-		}
-		p.status = "user disabled (undo with u)"
-		return p.refreshCmd()
-
+		_, err = users.SetDisabled(p.journal, acct.Name, true)
 	case usersConfirmEnable:
 		acct := p.selected()
 		if acct == nil {
+			p.confirm = usersConfirmNone
+			p.mode = usersModeList
 			return nil
 		}
-		_, err := users.SetDisabled(p.journal, acct.Name, false)
-		if err != nil {
-			p.errMsg = err.Error()
-			return nil
-		}
-		p.status = "user enabled (undo with u)"
-		return p.refreshCmd()
-
+		_, err = users.SetDisabled(p.journal, acct.Name, false)
 	case usersConfirmUndo:
-		_, err := users.UndoUserChange(p.journal, p.undoID)
-		if err != nil {
-			p.errMsg = err.Error()
-			return nil
-		}
+		_, err = users.UndoUserChange(p.journal, p.undoID)
+	default:
+		p.confirm = usersConfirmNone
+		p.mode = usersModeList
+		return nil
+	}
+
+	if cmd := maybeAskPriv(err, "User management requires administrator privileges"); cmd != nil {
+		p.confirm = action
+		p.mode = usersModeConfirm
+		return cmd
+	}
+	p.confirm = usersConfirmNone
+	p.mode = usersModeList
+	if err != nil {
+		p.errMsg = err.Error()
+		return nil
+	}
+	switch action {
+	case usersConfirmAdd:
+		p.status = "user created (undo with u)"
+	case usersConfirmEdit:
+		p.status = "user updated (undo with u)"
+	case usersConfirmDelete:
+		p.status = "user deleted (undo with u)"
+	case usersConfirmDisable:
+		p.status = "user disabled (undo with u)"
+	case usersConfirmEnable:
+		p.status = "user enabled (undo with u)"
+	case usersConfirmUndo:
 		p.status = "change undone"
 		p.undoID = ""
-		return p.refreshCmd()
 	}
-	return nil
+	return p.refreshCmd()
 }
 
 func (p usersPage) View(width, height int) string {
@@ -473,8 +472,12 @@ func (p usersPage) View(width, height int) string {
 		b.WriteString(mutedStyle.Render("loading…") + "\n")
 		return padBlock(strings.Split(b.String(), "\n"), width, height)
 	}
-	if os.Geteuid() != 0 {
-		b.WriteString(errorStyle.Render("read-only: re-run with sudo to apply changes") + "\n")
+	if os.Geteuid() != 0 && !priv.Default.HasElevated() {
+		b.WriteString(mutedStyle.Render("sudo password will be requested on apply") + "\n")
+	} else if priv.Default.Remembering() {
+		b.WriteString(mutedStyle.Render("sudo: remembered until exit") + "\n")
+	} else if os.Geteuid() != 0 && priv.Default.HasElevated() {
+		b.WriteString(mutedStyle.Render("sudo: session active") + "\n")
 	}
 	if p.snap.Warning != "" {
 		b.WriteString(mutedStyle.Render("⚠ "+p.snap.Warning) + "\n")

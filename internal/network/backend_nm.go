@@ -1,7 +1,6 @@
 package network
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 func enrichFromNM(ifaces []Iface) {
@@ -73,15 +73,15 @@ func applyIfaceNM(j *change.Journal, upd IfaceUpdate) (*change.Entry, error) {
 
 	if err := runNM(args...); err != nil {
 		restoreAll(backups)
-		_ = exec.Command("nmcli", "connection", "reload").Run()
+		_ = priv.Run("nmcli", "connection", "reload")
 		return nil, err
 	}
 	if err := runNM("device", "reapply", upd.Name); err != nil {
 		// Fallback: up the connection
 		if err2 := runNM("connection", "up", conn); err2 != nil {
 			restoreAll(backups)
-			_ = exec.Command("nmcli", "connection", "reload").Run()
-			_ = exec.Command("nmcli", "connection", "up", conn).Run()
+			_ = priv.Run("nmcli", "connection", "reload")
+			_ = priv.Run("nmcli", "connection", "up", conn)
 			return nil, fmt.Errorf("%v; reapply also failed: %v", err, err2)
 		}
 	}
@@ -100,7 +100,7 @@ func applyDNSNM(j *change.Journal, upd IfaceUpdate) (*change.Entry, error) {
 	}
 	if err := runNM("connection", "modify", conn, "ipv4.dns", strings.Join(upd.Nameservers, ",")); err != nil {
 		restoreAll(backups)
-		_ = exec.Command("nmcli", "connection", "reload").Run()
+		_ = priv.Run("nmcli", "connection", "reload")
 		return nil, err
 	}
 	_ = runNM("device", "reapply", upd.Name)
@@ -118,7 +118,7 @@ func applyGatewayNM(j *change.Journal, upd IfaceUpdate) (*change.Entry, error) {
 	}
 	if err := runNM("connection", "modify", conn, "ipv4.method", "manual", "ipv4.gateway", upd.Gateway); err != nil {
 		restoreAll(backups)
-		_ = exec.Command("nmcli", "connection", "reload").Run()
+		_ = priv.Run("nmcli", "connection", "reload")
 		return nil, err
 	}
 	if upd.AddressCIDR != "" {
@@ -165,7 +165,7 @@ func findNMKeyfile(conn, uuid string) string {
 		}
 		for _, e := range ents {
 			path := filepath.Join(dir, e.Name())
-			data, err := os.ReadFile(path)
+			data, err := priv.ReadFile(path)
 			if err != nil {
 				continue
 			}
@@ -192,15 +192,5 @@ func findNMKeyfile(conn, uuid string) string {
 }
 
 func runNM(args ...string) error {
-	cmd := exec.Command("nmcli", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("nmcli %s: %s", strings.Join(args, " "), msg)
-	}
-	return nil
+	return priv.Run("nmcli", args...)
 }

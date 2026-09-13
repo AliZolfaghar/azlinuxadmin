@@ -29,4 +29,7 @@ You give steps; we implement; we check them off here.
 - [x] Auto-detect network manager (NM / netplan / networkd / ifupdown) and apply via it
 - [x] Network page: edit default gateway (with confirm + undo)
 - [x] Users page: add / edit / delete / disable with journal undo
+- [x] SSH page: common sshd settings (root login, passwords, port, …) with undo
+- [x] SSH page: GatewayPorts setting
+- [x] Sudo password popup with remember-until-exit
 - [ ] (further tasks added as you specify them)

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 const (
@@ -205,12 +206,9 @@ func loadDefaultGateway(ifaces []Iface) (gw, iface string) {
 	return "", ""
 }
 
-// RequireRoot returns an error unless running as root.
+// RequireRoot returns an error unless privileged ops can run (root or sudo session).
 func RequireRoot() error {
-	if os.Geteuid() != 0 {
-		return fmt.Errorf("root required to apply network changes (re-run with sudo)")
-	}
-	return nil
+	return priv.Ensure()
 }
 
 func validateIfaceUpdate(upd *IfaceUpdate) error {

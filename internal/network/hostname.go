@@ -2,11 +2,10 @@ package network
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 // SetHostname updates /etc/hostname (and matching /etc/hosts) with backup+journal.
@@ -32,17 +31,15 @@ func SetHostname(j *change.Journal, newName string) (*change.Entry, error) {
 		return nil, err
 	}
 
-	if err := os.WriteFile(hostnamePath, []byte(newName+"\n"), 0o644); err != nil {
+	if err := priv.WriteFile(hostnamePath, []byte(newName+"\n"), 0o644); err != nil {
 		return nil, err
 	}
 	if err := updateHostsHostname(old, newName); err != nil {
 		_ = change.Restore(hb)
 		return nil, err
 	}
-	if path, err := exec.LookPath("hostnamectl"); err == nil {
-		_ = exec.Command(path, "set-hostname", newName).Run()
-	} else {
-		_ = exec.Command("hostname", newName).Run()
+	if err := priv.Run("hostnamectl", "set-hostname", newName); err != nil {
+		_ = priv.Run("hostname", newName)
 	}
 
 	return j.Record("network.hostname", fmt.Sprintf("hostname %s → %s", old, newName),
@@ -70,7 +67,7 @@ func validateHostname(h string) error {
 }
 
 func updateHostsHostname(old, newName string) error {
-	data, err := os.ReadFile(hostsPath)
+	data, err := priv.ReadFile(hostsPath)
 	if err != nil {
 		return err
 	}
@@ -112,7 +109,7 @@ func updateHostsHostname(old, newName string) error {
 	if !replaced {
 		lines = append(lines, "127.0.1.1 "+newName)
 	}
-	return os.WriteFile(hostsPath, []byte(strings.Join(lines, "\n")), 0o644)
+	return priv.WriteFile(hostsPath, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
 func hasLocalHostname(lines []string) bool {
@@ -150,28 +147,26 @@ func UndoNetworkChange(j *change.Journal, id string) (*change.Entry, error) {
 			return e, fmt.Errorf("files restored but netplan apply failed: %w", err)
 		}
 	case ManagerNetworkManager:
-		_ = exec.Command("nmcli", "connection", "reload").Run()
+		_ = priv.Run("nmcli", "connection", "reload")
 		if dev := e.Meta["iface"]; dev != "" {
-			_ = exec.Command("nmcli", "device", "reapply", dev).Run()
+			_ = priv.Run("nmcli", "device", "reapply", dev)
 		}
 	case ManagerNetworkd:
-		_ = exec.Command("networkctl", "reload").Run()
-		_ = exec.Command("systemctl", "restart", "systemd-networkd").Run()
+		_ = priv.Run("networkctl", "reload")
+		_ = priv.Run("systemctl", "restart", "systemd-networkd")
 	case ManagerIfupdown:
 		if iface := e.Meta["iface"]; iface != "" {
-			_ = exec.Command("ifdown", iface).Run()
-			_ = exec.Command("ifup", iface).Run()
+			_ = priv.Run("ifdown", iface)
+			_ = priv.Run("ifup", iface)
 		} else {
-			_ = exec.Command("systemctl", "restart", "networking").Run()
+			_ = priv.Run("systemctl", "restart", "networking")
 		}
 	}
 
 	if e.Kind == "network.hostname" {
 		if newName := e.Meta["old"]; newName != "" {
-			if path, err := exec.LookPath("hostnamectl"); err == nil {
-				_ = exec.Command(path, "set-hostname", newName).Run()
-			} else {
-				_ = exec.Command("hostname", newName).Run()
+			if err := priv.Run("hostnamectl", "set-hostname", newName); err != nil {
+				_ = priv.Run("hostname", newName)
 			}
 		}
 	}

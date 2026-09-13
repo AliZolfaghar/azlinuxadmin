@@ -11,6 +11,7 @@ import (
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
 	"github.com/AliZolfaghar/azlinuxadmin/internal/network"
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 type networkSection int
@@ -123,6 +124,8 @@ func (n *networkPage) Update(msg tea.Msg) tea.Cmd {
 			n.ifaceIdx = 0
 		}
 		return nil
+	case privRetryMsg:
+		return n.runConfirmed()
 	}
 
 	switch n.mode {
@@ -363,47 +366,26 @@ func (n *networkPage) handleEditEnter() tea.Cmd {
 
 func (n *networkPage) runConfirmed() tea.Cmd {
 	action := n.confirm
-	n.confirm = confirmNone
-	n.mode = netModeMenu
 	if n.journal == nil {
+		n.confirm = confirmNone
+		n.mode = netModeMenu
 		n.errMsg = "journal unavailable"
 		return nil
 	}
 
+	var err error
 	switch action {
 	case confirmHostname:
-		_, err := network.SetHostname(n.journal, strings.TrimSpace(n.input.Value()))
-		if err != nil {
-			n.errMsg = err.Error()
-			return nil
-		}
-		n.status = "hostname updated (undo with u)"
-		return n.refreshCmd()
-
+		_, err = network.SetHostname(n.journal, strings.TrimSpace(n.input.Value()))
 	case confirmDNS:
 		parts := splitCSV(n.input.Value())
 		iface := ""
 		if len(n.snap.Interfaces) > 0 {
 			iface = n.snap.Interfaces[0].Name
 		}
-		_, err := network.ApplyDNS(n.journal, iface, parts)
-		if err != nil {
-			n.errMsg = err.Error()
-			return nil
-		}
-		n.status = "DNS updated (undo with u)"
-		return n.refreshCmd()
-
+		_, err = network.ApplyDNS(n.journal, iface, parts)
 	case confirmGateway:
-		iface := n.snap.GatewayIface
-		_, err := network.ApplyGateway(n.journal, iface, strings.TrimSpace(n.input.Value()))
-		if err != nil {
-			n.errMsg = err.Error()
-			return nil
-		}
-		n.status = "gateway updated (undo with u)"
-		return n.refreshCmd()
-
+		_, err = network.ApplyGateway(n.journal, n.snap.GatewayIface, strings.TrimSpace(n.input.Value()))
 	case confirmIface:
 		ifc := n.snap.Interfaces[n.ifaceIdx]
 		upd := network.IfaceUpdate{
@@ -416,25 +398,40 @@ func (n *networkPage) runConfirmed() tea.Cmd {
 		if len(upd.Nameservers) == 0 {
 			upd.Nameservers = n.snap.DNS
 		}
-		_, err := network.ApplyIfaceConfig(n.journal, upd)
-		if err != nil {
-			n.errMsg = err.Error()
-			return nil
-		}
-		n.status = "interface updated (undo with u)"
-		return n.refreshCmd()
-
+		_, err = network.ApplyIfaceConfig(n.journal, upd)
 	case confirmUndo:
-		_, err := network.UndoNetworkChange(n.journal, n.undoID)
-		if err != nil {
-			n.errMsg = err.Error()
-			return nil
-		}
+		_, err = network.UndoNetworkChange(n.journal, n.undoID)
+	default:
+		n.confirm = confirmNone
+		n.mode = netModeMenu
+		return nil
+	}
+
+	if cmd := maybeAskPriv(err, "Network changes require administrator privileges"); cmd != nil {
+		n.confirm = action
+		n.mode = netModeConfirm
+		return cmd
+	}
+	n.confirm = confirmNone
+	n.mode = netModeMenu
+	if err != nil {
+		n.errMsg = err.Error()
+		return nil
+	}
+	switch action {
+	case confirmHostname:
+		n.status = "hostname updated (undo with u)"
+	case confirmDNS:
+		n.status = "DNS updated (undo with u)"
+	case confirmGateway:
+		n.status = "gateway updated (undo with u)"
+	case confirmIface:
+		n.status = "interface updated (undo with u)"
+	case confirmUndo:
 		n.status = "change undone"
 		n.undoID = ""
-		return n.refreshCmd()
 	}
-	return nil
+	return n.refreshCmd()
 }
 
 func splitCSV(s string) []string {
@@ -465,8 +462,12 @@ func (n networkPage) View(width, height int) string {
 		b.WriteString(mutedStyle.Render("loading…") + "\n")
 		return padBlock(strings.Split(b.String(), "\n"), width, height)
 	}
-	if os.Geteuid() != 0 {
-		b.WriteString(errorStyle.Render("read-only: re-run with sudo to apply changes") + "\n")
+	if os.Geteuid() != 0 && !priv.Default.HasElevated() {
+		b.WriteString(mutedStyle.Render("sudo password will be requested on apply") + "\n")
+	} else if priv.Default.Remembering() {
+		b.WriteString(mutedStyle.Render("sudo: remembered until exit") + "\n")
+	} else if os.Geteuid() != 0 && priv.Default.HasElevated() {
+		b.WriteString(mutedStyle.Render("sudo: session active") + "\n")
 	}
 	if !n.snap.Detection.Writable {
 		b.WriteString(errorStyle.Render("cannot apply via "+mgrLabel+": "+n.snap.Detection.Reason) + "\n")

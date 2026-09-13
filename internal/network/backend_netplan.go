@@ -1,14 +1,13 @@
 package network
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -29,7 +28,7 @@ func readAllNetplan() ([]netplanDoc, error) {
 			continue
 		}
 		path := filepath.Join(netplanDir, name)
-		data, err := os.ReadFile(path)
+		data, err := priv.ReadFile(path)
 		if err != nil {
 			continue
 		}
@@ -235,15 +234,13 @@ func writeIfaceNetplan(upd IfaceUpdate) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(doc.Path, out, 0o600)
+	return priv.WriteFile(doc.Path, out, 0o600)
 }
 
 func netplanApply() error {
-	cmd := exec.Command("netplan", "apply")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
+	out, err := priv.CombinedOutput("netplan", "apply")
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
 		if msg == "" {
 			msg = err.Error()
 		}

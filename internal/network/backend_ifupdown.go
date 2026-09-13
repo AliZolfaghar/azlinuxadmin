@@ -3,16 +3,16 @@ package network
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 const interfacesPath = "/etc/network/interfaces"
 
 func enrichFromIfupdown(ifaces []Iface) {
-	data, err := os.ReadFile(interfacesPath)
+	data, err := priv.ReadFile(interfacesPath)
 	if err != nil {
 		return
 	}
@@ -42,11 +42,7 @@ func enrichFromIfupdown(ifaces []Iface) {
 		switch fields[0] {
 		case "address":
 			if len(fields) > 1 {
-				addr := fields[1]
-				if len(fields) > 2 && fields[2] == "netmask" {
-					// ignore classic netmask form for display; keep address
-				}
-				cur.Addresses = []string{addr}
+				cur.Addresses = []string{fields[1]}
 			}
 		case "gateway":
 			if len(fields) > 1 {
@@ -64,12 +60,12 @@ func applyIfaceIfupdown(j *change.Journal, upd IfaceUpdate) (*change.Entry, erro
 		return nil, err
 	}
 	backups := []change.FileBackup{b}
-	data, err := os.ReadFile(interfacesPath)
+	data, err := priv.ReadFile(interfacesPath)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	updated := upsertIfupdownIface(string(data), upd)
-	if err := os.WriteFile(interfacesPath, []byte(updated), 0o644); err != nil {
+	if err := priv.WriteFile(interfacesPath, []byte(updated), 0o644); err != nil {
 		restoreAll(backups)
 		return nil, err
 	}
@@ -90,12 +86,12 @@ func applyDNSIfupdown(j *change.Journal, upd IfaceUpdate) (*change.Entry, error)
 		return nil, err
 	}
 	backups := []change.FileBackup{b}
-	data, err := os.ReadFile(interfacesPath)
+	data, err := priv.ReadFile(interfacesPath)
 	if err != nil {
 		return nil, err
 	}
 	updated := upsertIfupdownDNS(string(data), upd.Name, upd.Nameservers)
-	if err := os.WriteFile(interfacesPath, []byte(updated), 0o644); err != nil {
+	if err := priv.WriteFile(interfacesPath, []byte(updated), 0o644); err != nil {
 		restoreAll(backups)
 		return nil, err
 	}
@@ -115,12 +111,12 @@ func applyGatewayIfupdown(j *change.Journal, upd IfaceUpdate) (*change.Entry, er
 		return nil, err
 	}
 	backups := []change.FileBackup{b}
-	data, err := os.ReadFile(interfacesPath)
+	data, err := priv.ReadFile(interfacesPath)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	updated := upsertIfupdownIface(string(data), upd)
-	if err := os.WriteFile(interfacesPath, []byte(updated), 0o644); err != nil {
+	if err := priv.WriteFile(interfacesPath, []byte(updated), 0o644); err != nil {
 		restoreAll(backups)
 		return nil, err
 	}
@@ -222,9 +218,9 @@ func upsertIfupdownDNS(content, iface string, dns []string) string {
 }
 
 func reloadIfupdown(iface string) error {
-	_ = exec.Command("ifdown", iface).Run()
-	if err := exec.Command("ifup", iface).Run(); err != nil {
-		if err2 := exec.Command("systemctl", "restart", "networking").Run(); err2 != nil {
+	_ = priv.Run("ifdown", iface)
+	if err := priv.Run("ifup", iface); err != nil {
+		if err2 := priv.Run("systemctl", "restart", "networking"); err2 != nil {
 			return fmt.Errorf("ifup %s: %v; networking restart: %v", iface, err, err2)
 		}
 	}

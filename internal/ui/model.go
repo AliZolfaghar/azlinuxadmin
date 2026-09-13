@@ -8,6 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 const appVersion = "v0.1"
@@ -50,6 +52,8 @@ type Model struct {
 
 	network networkPage
 	users   usersPage
+	ssh     sshPage
+	sudo    sudoModal
 }
 
 // New creates the initial UI model with host/user metadata.
@@ -67,16 +71,18 @@ func New() Model {
 	return Model{
 		host:     host,
 		username: username,
-		hasSudo:  os.Geteuid() == 0,
+		hasSudo:  os.Geteuid() == 0 || priv.Default.HasElevated(),
 		cursor:   0,
 		focus:    focusSidebar,
 		network:  newNetworkPage(),
 		users:    newUsersPage(),
+		ssh:      newSSHPage(),
+		sudo:     newSudoModal(),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.network.Init(), m.users.Init())
+	return tea.Batch(m.network.Init(), m.users.Init(), m.ssh.Init())
 }
 
 func (m Model) activeModule() string {
@@ -93,19 +99,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case needPrivMsg:
+		m.sudo.open(msg.Reason, msg.Retry)
+		return m, nil
+
 	case netRefreshMsg:
 		cmd := m.network.Update(msg)
 		if m.network.snap.Hostname != "" {
 			m.host = m.network.snap.Hostname
 		}
+		m.hasSudo = os.Geteuid() == 0 || priv.Default.HasElevated()
 		return m, cmd
 
 	case usersRefreshMsg:
+		m.hasSudo = os.Geteuid() == 0 || priv.Default.HasElevated()
 		return m, m.users.Update(msg)
 
+	case sshRefreshMsg:
+		m.hasSudo = os.Geteuid() == 0 || priv.Default.HasElevated()
+		return m, m.ssh.Update(msg)
+
+	case privRetryMsg:
+		m.hasSudo = os.Geteuid() == 0 || priv.Default.HasElevated()
+		switch m.activeModule() {
+		case "Network":
+			return m, m.network.Update(msg)
+		case "Users":
+			return m, m.users.Update(msg)
+		case "SSH":
+			return m, m.ssh.Update(msg)
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		if m.sudo.active {
+			cmd := m.sudo.Update(msg)
+			m.hasSudo = os.Geteuid() == 0 || priv.Default.HasElevated()
+			return m, cmd
+		}
+
 		switch msg.String() {
 		case "ctrl+c":
+			priv.Default.Clear()
 			return m, tea.Quit
 		}
 
@@ -135,10 +170,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.users.Update(msg)
+
+		case "SSH":
+			if msg.String() == "esc" && m.ssh.mode == sshModeList {
+				m.focus = focusSidebar
+				return m, nil
+			}
+			if msg.String() == "q" && m.ssh.mode == sshModeList {
+				m.focus = focusSidebar
+				return m, nil
+			}
+			return m, m.ssh.Update(msg)
 		}
 
 		switch msg.String() {
 		case "q":
+			priv.Default.Clear()
 			return m, tea.Quit
 		case "up", "k":
 			if m.cursor > 0 {
@@ -154,6 +201,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if menuItems[m.cursor] == "Exit" {
+				priv.Default.Clear()
 				return m, tea.Quit
 			}
 			if menuItems[m.cursor] == "Network" {
@@ -170,8 +218,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.users.errMsg = ""
 				return m, m.users.refreshCmd()
 			}
+			if menuItems[m.cursor] == "SSH" {
+				m.focus = focusMain
+				m.ssh.mode = sshModeList
+				m.ssh.status = ""
+				m.ssh.errMsg = ""
+				m.ssh.draft = map[string]string{}
+				return m, m.ssh.refreshCmd()
+			}
 		case "/", "?":
 			// later
+		}
+	default:
+		if m.sudo.active {
+			return m, m.sudo.Update(msg)
 		}
 	}
 	return m, nil
@@ -180,6 +240,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	if m.width < minWidth || m.height < minHeight {
 		return fmt.Sprintf("Terminal too small (%dx%d). Need at least %dx%d.", m.width, m.height, minWidth, minHeight)
+	}
+
+	if m.sudo.active {
+		return m.sudo.View(m.width, m.height)
 	}
 
 	headerH := 1
@@ -215,8 +279,13 @@ func (m Model) View() string {
 
 func (m Model) renderHeader(innerWidth int) string {
 	sudoMark := "✗"
-	if m.hasSudo {
+	sudoHint := ""
+	elevated := os.Geteuid() == 0 || priv.Default.HasElevated()
+	if elevated {
 		sudoMark = "✓"
+	}
+	if priv.Default.Remembering() {
+		sudoHint = mutedStyle.Render(" (remembered)")
 	}
 
 	title := lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("🐧 AZLinuxAdmin %s", appVersion))
@@ -225,11 +294,11 @@ func (m Model) renderHeader(innerWidth int) string {
 	userPart := mutedStyle.Render(fmt.Sprintf("user: %s", m.username))
 	sudoLabel := mutedStyle.Render("sudo:")
 	sudoVal := okStyle.Render(sudoMark)
-	if !m.hasSudo {
+	if !elevated {
 		sudoVal = mutedStyle.Render(sudoMark)
 	}
 
-	line := lipgloss.JoinHorizontal(lipgloss.Top, title, sep, host, sep, userPart, sep, sudoLabel, sudoVal)
+	line := lipgloss.JoinHorizontal(lipgloss.Top, title, sep, host, sep, userPart, sep, sudoLabel, sudoVal, sudoHint)
 	return padLine(line, innerWidth)
 }
 
@@ -259,6 +328,8 @@ func (m Model) renderMain(width, height int) string {
 		return m.network.View(width, height)
 	case "Users":
 		return m.users.View(width, height)
+	case "SSH":
+		return m.ssh.View(width, height)
 	}
 	label := mutedStyle.Italic(true).Render(fmt.Sprintf("%s — coming soon", menuItems[m.cursor]))
 	hint := ""
@@ -286,6 +357,14 @@ func (m Model) renderFooter(innerWidth int) string {
 			keyStyle.Render("e") + mutedStyle.Render(" : edit"),
 			keyStyle.Render("d") + mutedStyle.Render(" : del"),
 			keyStyle.Render("x") + mutedStyle.Render(" : disable"),
+			keyStyle.Render("u") + mutedStyle.Render(" : undo"),
+			keyStyle.Render("Esc") + mutedStyle.Render(" : sidebar"),
+		}
+	case m.focus == focusMain && menuItems[m.cursor] == "SSH":
+		parts = []string{
+			keyStyle.Render("Enter") + mutedStyle.Render(" : change"),
+			keyStyle.Render("a") + mutedStyle.Render(" : apply"),
+			keyStyle.Render("c") + mutedStyle.Render(" : clear"),
 			keyStyle.Render("u") + mutedStyle.Render(" : undo"),
 			keyStyle.Render("Esc") + mutedStyle.Render(" : sidebar"),
 		}

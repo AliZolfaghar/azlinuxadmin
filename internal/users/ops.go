@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 var accountFiles = []string{
@@ -251,17 +252,7 @@ func SetDisabled(j *change.Journal, name string, disabled bool) (*change.Entry, 
 }
 
 func setPassword(name, password string) error {
-	cmd := exec.Command("chpasswd")
-	cmd.Stdin = strings.NewReader(name + ":" + password + "\n")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
-			msg = err.Error()
-		}
-		return fmt.Errorf("chpasswd: %s", msg)
-	}
-	return nil
+	return priv.RunWithStdin(name+":"+password+"\n", "chpasswd")
 }
 
 func archiveHome(j *change.Journal, name, home string) (string, error) {
@@ -277,7 +268,10 @@ func archiveHome(j *change.Journal, name, home string) (string, error) {
 	cmd := exec.Command("tar", "-czf", path, "-C", parent, base)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		// Home may be root-owned; try privileged tar.
+		if err := priv.Run("tar", "-czf", path, "-C", parent, base); err != nil {
+			return "", fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		}
 	}
 	return path, nil
 }
@@ -300,14 +294,14 @@ func UndoUserChange(j *change.Journal, id string) (*change.Entry, error) {
 
 	// If this undoes a delete, restore home from archive when present.
 	if e.Kind == "users.delete" {
-		if arch := e.Meta["home_archive"]; arch != "" {
-			home := e.Meta["home"]
-			if home != "" && fileExists(arch) {
-				parent := filepath.Dir(home)
-				_ = os.MkdirAll(parent, 0o755)
-				_ = exec.Command("tar", "-xzf", arch, "-C", parent).Run()
+			if arch := e.Meta["home_archive"]; arch != "" {
+				home := e.Meta["home"]
+				if home != "" && fileExists(arch) {
+					parent := filepath.Dir(home)
+					_ = priv.Run("mkdir", "-p", parent)
+					_ = priv.Run("tar", "-xzf", arch, "-C", parent)
+				}
 			}
-		}
 	}
 
 	// If undoing an add, the restored DBs remove the user — clean leftover home if empty add undo.

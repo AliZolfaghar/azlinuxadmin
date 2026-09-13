@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 const appDirName = "azlinuxadmin"
@@ -72,9 +74,22 @@ func BackupFile(path string) (FileBackup, error) {
 		if os.IsNotExist(err) {
 			return FileBackup{Path: path, Existed: false}, nil
 		}
-		return FileBackup{}, err
+		// Root-only path: try via sudo.
+		data, rerr := priv.ReadFile(path)
+		if rerr != nil {
+			if os.IsNotExist(rerr) {
+				return FileBackup{Path: path, Existed: false}, nil
+			}
+			return FileBackup{}, rerr
+		}
+		return FileBackup{
+			Path:    path,
+			Content: data,
+			Existed: true,
+			Mode:    0o644,
+		}, nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := priv.ReadFile(path)
 	if err != nil {
 		return FileBackup{}, err
 	}
@@ -89,19 +104,14 @@ func BackupFile(path string) (FileBackup, error) {
 // Restore writes a backup back to disk.
 func Restore(b FileBackup) error {
 	if !b.Existed {
-		if err := os.Remove(b.Path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
+		return priv.Remove(b.Path)
 	}
-	if err := os.MkdirAll(filepath.Dir(b.Path), 0o755); err != nil {
-		return err
-	}
+	_ = priv.Run("mkdir", "-p", filepath.Dir(b.Path))
 	mode := os.FileMode(0o644)
 	if b.Mode != 0 {
 		mode = os.FileMode(b.Mode)
 	}
-	return os.WriteFile(b.Path, b.Content, mode)
+	return priv.WriteFile(b.Path, b.Content, mode)
 }
 
 // Record writes a new journal entry and returns it.
