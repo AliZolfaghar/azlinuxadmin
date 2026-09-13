@@ -49,6 +49,7 @@ type Model struct {
 	hasSudo  bool
 
 	network networkPage
+	users   usersPage
 }
 
 // New creates the initial UI model with host/user metadata.
@@ -70,11 +71,19 @@ func New() Model {
 		cursor:   0,
 		focus:    focusSidebar,
 		network:  newNetworkPage(),
+		users:    newUsersPage(),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return m.network.Init()
+	return tea.Batch(m.network.Init(), m.users.Init())
+}
+
+func (m Model) activeModule() string {
+	if m.focus != focusMain {
+		return ""
+	}
+	return menuItems[m.cursor]
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -86,11 +95,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case netRefreshMsg:
 		cmd := m.network.Update(msg)
-		// Keep header hostname in sync after changes.
 		if m.network.snap.Hostname != "" {
 			m.host = m.network.snap.Hostname
 		}
 		return m, cmd
+
+	case usersRefreshMsg:
+		return m, m.users.Update(msg)
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -98,7 +109,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		if m.focus == focusMain && menuItems[m.cursor] == "Network" {
+		switch m.activeModule() {
+		case "Network":
 			if msg.String() == "esc" && m.network.mode == netModeMenu {
 				m.focus = focusSidebar
 				return m, nil
@@ -112,6 +124,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.host = m.network.snap.Hostname
 			}
 			return m, cmd
+
+		case "Users":
+			if msg.String() == "esc" && m.users.mode == usersModeList {
+				m.focus = focusSidebar
+				return m, nil
+			}
+			if msg.String() == "q" && m.users.mode == usersModeList {
+				m.focus = focusSidebar
+				return m, nil
+			}
+			return m, m.users.Update(msg)
 		}
 
 		switch msg.String() {
@@ -139,6 +162,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.network.status = ""
 				m.network.errMsg = ""
 				return m, m.network.refreshCmd()
+			}
+			if menuItems[m.cursor] == "Users" {
+				m.focus = focusMain
+				m.users.mode = usersModeList
+				m.users.status = ""
+				m.users.errMsg = ""
+				return m, m.users.refreshCmd()
 			}
 		case "/", "?":
 			// later
@@ -224,8 +254,11 @@ func (m Model) renderSidebar(width, height int) string {
 }
 
 func (m Model) renderMain(width, height int) string {
-	if menuItems[m.cursor] == "Network" {
+	switch menuItems[m.cursor] {
+	case "Network":
 		return m.network.View(width, height)
+	case "Users":
+		return m.users.View(width, height)
 	}
 	label := mutedStyle.Italic(true).Render(fmt.Sprintf("%s — coming soon", menuItems[m.cursor]))
 	hint := ""
@@ -238,7 +271,8 @@ func (m Model) renderMain(width, height int) string {
 
 func (m Model) renderFooter(innerWidth int) string {
 	var parts []string
-	if m.focus == focusMain && menuItems[m.cursor] == "Network" {
+	switch {
+	case m.focus == focusMain && menuItems[m.cursor] == "Network":
 		parts = []string{
 			keyStyle.Render("↑↓") + mutedStyle.Render(" : move"),
 			keyStyle.Render("Enter") + mutedStyle.Render(" : select"),
@@ -246,7 +280,16 @@ func (m Model) renderFooter(innerWidth int) string {
 			keyStyle.Render("u") + mutedStyle.Render(" : undo"),
 			keyStyle.Render("Esc") + mutedStyle.Render(" : sidebar"),
 		}
-	} else {
+	case m.focus == focusMain && menuItems[m.cursor] == "Users":
+		parts = []string{
+			keyStyle.Render("a") + mutedStyle.Render(" : add"),
+			keyStyle.Render("e") + mutedStyle.Render(" : edit"),
+			keyStyle.Render("d") + mutedStyle.Render(" : del"),
+			keyStyle.Render("x") + mutedStyle.Render(" : disable"),
+			keyStyle.Render("u") + mutedStyle.Render(" : undo"),
+			keyStyle.Render("Esc") + mutedStyle.Render(" : sidebar"),
+		}
+	default:
 		parts = []string{
 			keyStyle.Render("↑↓") + mutedStyle.Render(" : move"),
 			keyStyle.Render("Enter") + mutedStyle.Render(" : select"),

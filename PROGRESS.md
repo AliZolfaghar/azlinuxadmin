@@ -28,4 +28,5 @@ You give steps; we implement; we check them off here.
 - [x] Network page: hostname, NIC (netplan), DNS — with confirm + journal undo
 - [x] Auto-detect network manager (NM / netplan / networkd / ifupdown) and apply via it
 - [x] Network page: edit default gateway (with confirm + undo)
+- [x] Users page: add / edit / delete / disable with journal undo
 - [ ] (further tasks added as you specify them)
