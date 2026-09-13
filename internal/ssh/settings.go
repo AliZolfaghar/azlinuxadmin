@@ -64,9 +64,11 @@ var CommonSettings = []SettingDef{
 
 // Snapshot is the effective SSH config view for the UI.
 type Snapshot struct {
-	Values  map[string]string // lowercase key → value
-	Managed map[string]string // values currently in our drop-in
-	Warning string
+	Values         map[string]string // lowercase key → value
+	Managed        map[string]string // values currently in our drop-in
+	FailedLogins   []FailedLogin
+	FailedLoginsTx string // preformatted for the TUI
+	Warning        string
 }
 
 // LoadSnapshot reads effective sshd settings (sshd -T) and our managed drop-in.
@@ -89,6 +91,8 @@ func LoadSnapshot() Snapshot {
 		}
 	}
 	s.Managed = parseManagedFile()
+	s.FailedLogins = LoadFailedLogins(25)
+	s.FailedLoginsTx = FormatFailedLogins(s.FailedLogins)
 	return s
 }
 

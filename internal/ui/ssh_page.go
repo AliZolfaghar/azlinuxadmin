@@ -391,6 +391,24 @@ func (p sshPage) View(width, height int) string {
 				b.WriteString(mutedStyle.Render("    "+def.Description) + "\n")
 			}
 		}
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render(fmt.Sprintf("── failed SSH logins (%d) ──", len(p.snap.FailedLogins))) + "\n")
+		failed := p.snap.FailedLoginsTx
+		if failed == "" {
+			failed = "(no recent failed SSH logins found)"
+		}
+		// Fit remaining space: keep newest lines.
+		remaining := height - strings.Count(b.String(), "\n") - 1
+		if remaining < 3 {
+			remaining = 3
+		}
+		flines := strings.Split(failed, "\n")
+		if len(flines) > remaining {
+			flines = flines[len(flines)-remaining:]
+		}
+		for _, line := range flines {
+			b.WriteString(itemStyle.Render(line) + "\n")
+		}
 	}
 
 	return padBlock(strings.Split(b.String(), "\n"), width, height)

@@ -33,4 +33,5 @@ You give steps; we implement; we check them off here.
 - [x] SSH page: GatewayPorts setting
 - [x] Require root/sudo to run (no in-app password prompt)
 - [x] Fail2Ban page: install, configure, live log view (with undo)
+- [x] SSH page: show latest failed SSH login attempts
 - [ ] (further tasks added as you specify them)
