@@ -1,0 +1,33 @@
+---
+description: All server changes made by AZLinuxAdmin must be safe and undoable
+alwaysApply: true
+---
+
+# Safe & undoable server changes
+
+Every change this app makes on a Linux host must be **safe** and **undoable**. Treat this as a hard product requirement for all modules and features.
+
+## Requirements
+
+- Prefer reversible operations over destructive ones.
+- Before mutating system state (files, users, packages, firewall, services, SSH, etc.), capture enough context to restore the prior state.
+- Persist an undo/rollback trail (e.g. backups, snapshots, change log, reverse commands) that the operator can run from the TUI.
+- Never silently overwrite or delete without a recoverable backup or explicit undo path.
+- Destructive actions (delete user, flush firewall, purge packages, etc.) need confirmation **and** a documented undo path when technically possible.
+- If a change cannot be undone safely, refuse or warn clearly in the UI and do not proceed by default.
+
+## Implementation guidance
+
+- When adding a module that mutates the system, ship apply + undo (or dry-run) together — not apply-only.
+- Keep mutations auditable: what changed, when, by whom, and how to reverse it.
+- Prefer editing via temp/backup copies (`file.bak`, timestamped snapshots) over in-place wipes.
+
+## Examples
+
+```text
+✅ GOOD: edit sshd_config → save timestamped backup → apply → record undo entry to restore backup
+✅ GOOD: add firewall rule → log rule id/spec → undo deletes that exact rule
+❌ BAD: overwrite configs in place with no backup
+❌ BAD: delete users/files with no restore path
+❌ BAD: ship a “Apply” action without a matching undo/rollback story
+```

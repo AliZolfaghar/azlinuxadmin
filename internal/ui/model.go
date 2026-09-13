@@ -31,14 +31,24 @@ const (
 	minHeight    = 16
 )
 
+type focusArea int
+
+const (
+	focusSidebar focusArea = iota
+	focusMain
+)
+
 // Model is the root Bubbletea model for the shell UI.
 type Model struct {
 	width    int
 	height   int
 	cursor   int
+	focus    focusArea
 	host     string
 	username string
 	hasSudo  bool
+
+	network networkPage
 }
 
 // New creates the initial UI model with host/user metadata.
@@ -58,11 +68,13 @@ func New() Model {
 		username: username,
 		hasSudo:  os.Geteuid() == 0,
 		cursor:   0,
+		focus:    focusSidebar,
+		network:  newNetworkPage(),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return nil
+	return m.network.Init()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -72,9 +84,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case netRefreshMsg:
+		cmd := m.network.Update(msg)
+		// Keep header hostname in sync after changes.
+		if m.network.snap.Hostname != "" {
+			m.host = m.network.snap.Hostname
+		}
+		return m, cmd
+
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
+			return m, tea.Quit
+		}
+
+		if m.focus == focusMain && menuItems[m.cursor] == "Network" {
+			if msg.String() == "esc" && m.network.mode == netModeMenu {
+				m.focus = focusSidebar
+				return m, nil
+			}
+			if msg.String() == "q" && m.network.mode == netModeMenu {
+				m.focus = focusSidebar
+				return m, nil
+			}
+			cmd := m.network.Update(msg)
+			if m.network.snap.Hostname != "" {
+				m.host = m.network.snap.Hostname
+			}
+			return m, cmd
+		}
+
+		switch msg.String() {
+		case "q":
 			return m, tea.Quit
 		case "up", "k":
 			if m.cursor > 0 {
@@ -92,9 +133,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if menuItems[m.cursor] == "Exit" {
 				return m, tea.Quit
 			}
-			// Modules come later — Enter is a no-op for now.
+			if menuItems[m.cursor] == "Network" {
+				m.focus = focusMain
+				m.network.mode = netModeMenu
+				m.network.status = ""
+				m.network.errMsg = ""
+				return m, m.network.refreshCmd()
+			}
 		case "/", "?":
-			// Search/help come later.
+			// later
 		}
 	}
 	return m, nil
@@ -105,17 +152,15 @@ func (m Model) View() string {
 		return fmt.Sprintf("Terminal too small (%dx%d). Need at least %dx%d.", m.width, m.height, minWidth, minHeight)
 	}
 
-	// Frame: header / (sidebar | main) / footer, matching the ASCII mockup.
 	headerH := 1
 	footerH := 1
-	// +4 for three horizontal border rows and content padding accounting
 	bodyH := m.height - headerH - footerH - 4
 	if bodyH < 3 {
 		bodyH = 3
 	}
 
 	sideW := sidebarWidth
-	mainW := m.width - sideW - 3 // vertical borders: left, mid, right
+	mainW := m.width - sideW - 3
 	if mainW < 20 {
 		mainW = 20
 		sideW = m.width - mainW - 3
@@ -164,28 +209,51 @@ func (m Model) renderSidebar(width, height int) string {
 	for i, item := range menuItems {
 		cursor := "  "
 		style := itemStyle
-		if i == m.cursor {
+		active := i == m.cursor
+		if active {
 			cursor = cursorStyle.Render("▸") + " "
 			style = activeItemStyle
 		}
-		lines = append(lines, style.Render(cursor+item))
+		label := style.Render(cursor + item)
+		if active && m.focus == focusMain {
+			label = style.Render(cursor+item) + mutedStyle.Render(" •")
+		}
+		lines = append(lines, label)
 	}
 	return padBlock(lines, width, height)
 }
 
 func (m Model) renderMain(width, height int) string {
+	if menuItems[m.cursor] == "Network" {
+		return m.network.View(width, height)
+	}
 	label := mutedStyle.Italic(true).Render(fmt.Sprintf("%s — coming soon", menuItems[m.cursor]))
-	lines := []string{"", " " + label}
+	hint := ""
+	if m.focus == focusSidebar {
+		hint = mutedStyle.Render("Enter to open when available")
+	}
+	lines := []string{"", " " + label, "", " " + hint}
 	return padBlock(lines, width, height)
 }
 
 func (m Model) renderFooter(innerWidth int) string {
-	parts := []string{
-		keyStyle.Render("↑↓") + mutedStyle.Render(" : move"),
-		keyStyle.Render("Enter") + mutedStyle.Render(" : select"),
-		keyStyle.Render("/") + mutedStyle.Render(" : search"),
-		keyStyle.Render("?") + mutedStyle.Render(" : help"),
-		keyStyle.Render("q") + mutedStyle.Render(" : exit"),
+	var parts []string
+	if m.focus == focusMain && menuItems[m.cursor] == "Network" {
+		parts = []string{
+			keyStyle.Render("↑↓") + mutedStyle.Render(" : move"),
+			keyStyle.Render("Enter") + mutedStyle.Render(" : select"),
+			keyStyle.Render("r") + mutedStyle.Render(" : refresh"),
+			keyStyle.Render("u") + mutedStyle.Render(" : undo"),
+			keyStyle.Render("Esc") + mutedStyle.Render(" : sidebar"),
+		}
+	} else {
+		parts = []string{
+			keyStyle.Render("↑↓") + mutedStyle.Render(" : move"),
+			keyStyle.Render("Enter") + mutedStyle.Render(" : select"),
+			keyStyle.Render("/") + mutedStyle.Render(" : search"),
+			keyStyle.Render("?") + mutedStyle.Render(" : help"),
+			keyStyle.Render("q") + mutedStyle.Render(" : exit"),
+		}
 	}
 	line := "  " + strings.Join(parts, "   ")
 	return padLine(line, innerWidth)

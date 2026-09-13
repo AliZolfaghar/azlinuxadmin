@@ -24,4 +24,8 @@ You give steps; we implement; we check them off here.
 - [x] Produce a single `go build` executable
 - [x] Shell UI layout (header / sidebar / main / footer) — no modules yet
 - [x] Add `run-dev.sh` for local development (`go run`)
+- [x] Rule: all server changes must be safe and undoable (`.cursor/rules/safe-undoable-changes.mdc`)
+- [x] Network page: hostname, NIC (netplan), DNS — with confirm + journal undo
+- [x] Auto-detect network manager (NM / netplan / networkd / ifupdown) and apply via it
+- [x] Network page: edit default gateway (with confirm + undo)
 - [ ] (further tasks added as you specify them)
