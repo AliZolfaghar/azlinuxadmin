@@ -11,7 +11,6 @@ import (
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
 	"github.com/AliZolfaghar/azlinuxadmin/internal/network"
-	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 )
 
 type networkSection int
@@ -124,8 +123,6 @@ func (n *networkPage) Update(msg tea.Msg) tea.Cmd {
 			n.ifaceIdx = 0
 		}
 		return nil
-	case privRetryMsg:
-		return n.runConfirmed()
 	}
 
 	switch n.mode {
@@ -407,11 +404,6 @@ func (n *networkPage) runConfirmed() tea.Cmd {
 		return nil
 	}
 
-	if cmd := maybeAskPriv(err, "Network changes require administrator privileges"); cmd != nil {
-		n.confirm = action
-		n.mode = netModeConfirm
-		return cmd
-	}
 	n.confirm = confirmNone
 	n.mode = netModeMenu
 	if err != nil {
@@ -462,12 +454,8 @@ func (n networkPage) View(width, height int) string {
 		b.WriteString(mutedStyle.Render("loading…") + "\n")
 		return padBlock(strings.Split(b.String(), "\n"), width, height)
 	}
-	if os.Geteuid() != 0 && !priv.Default.HasElevated() {
-		b.WriteString(mutedStyle.Render("sudo password will be requested on apply") + "\n")
-	} else if priv.Default.Remembering() {
-		b.WriteString(mutedStyle.Render("sudo: remembered until exit") + "\n")
-	} else if os.Geteuid() != 0 && priv.Default.HasElevated() {
-		b.WriteString(mutedStyle.Render("sudo: session active") + "\n")
+	if os.Geteuid() != 0 {
+		b.WriteString(errorStyle.Render("must run as root (sudo)") + "\n")
 	}
 	if !n.snap.Detection.Writable {
 		b.WriteString(errorStyle.Render("cannot apply via "+mgrLabel+": "+n.snap.Detection.Reason) + "\n")

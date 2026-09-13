@@ -31,5 +31,6 @@ You give steps; we implement; we check them off here.
 - [x] Users page: add / edit / delete / disable with journal undo
 - [x] SSH page: common sshd settings (root login, passwords, port, …) with undo
 - [x] SSH page: GatewayPorts setting
-- [x] Sudo password popup with remember-until-exit
+- [x] Require root/sudo to run (no in-app password prompt)
+- [x] Fail2Ban page: install, configure, live log view (with undo)
 - [ ] (further tasks added as you specify them)

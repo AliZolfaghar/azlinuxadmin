@@ -10,7 +10,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/AliZolfaghar/azlinuxadmin/internal/change"
-	"github.com/AliZolfaghar/azlinuxadmin/internal/priv"
 	"github.com/AliZolfaghar/azlinuxadmin/internal/ssh"
 )
 
@@ -116,8 +115,6 @@ func (p *sshPage) Update(msg tea.Msg) tea.Cmd {
 			p.errMsg = msg.err.Error()
 		}
 		return nil
-	case privRetryMsg:
-		return p.runConfirmed()
 	}
 
 	if p.mode == sshModeEditInt {
@@ -296,11 +293,6 @@ func (p *sshPage) runConfirmed() tea.Cmd {
 		return nil
 	}
 
-	if cmd := maybeAskPriv(err, "SSH configuration requires administrator privileges"); cmd != nil {
-		p.confirm = action
-		p.mode = sshModeConfirm
-		return cmd
-	}
 	p.confirm = sshConfirmNone
 	p.mode = sshModeList
 	if err != nil {
@@ -326,12 +318,8 @@ func (p sshPage) View(width, height int) string {
 		b.WriteString(mutedStyle.Render("loading…") + "\n")
 		return padBlock(strings.Split(b.String(), "\n"), width, height)
 	}
-	if os.Geteuid() != 0 && !priv.Default.HasElevated() {
-		b.WriteString(mutedStyle.Render("sudo password will be requested on apply") + "\n")
-	} else if priv.Default.Remembering() {
-		b.WriteString(mutedStyle.Render("sudo: remembered until exit") + "\n")
-	} else if os.Geteuid() != 0 && priv.Default.HasElevated() {
-		b.WriteString(mutedStyle.Render("sudo: session active") + "\n")
+	if os.Geteuid() != 0 {
+		b.WriteString(errorStyle.Render("must run as root (sudo)") + "\n")
 	}
 	if p.snap.Warning != "" {
 		b.WriteString(mutedStyle.Render("⚠ "+p.snap.Warning) + "\n")

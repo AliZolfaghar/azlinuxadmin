@@ -11,4 +11,8 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ "$(id -u)" -ne 0 ]]; then
+  exec sudo -E env "PATH=$PATH" go run .
+fi
+
 exec go run .
